@@ -1,0 +1,156 @@
+/* This is the Binary Search Tree to Code
+ *
+ * Modified by Aziz Alshaaba <Alshaab@pdx.edu>
+ * DATE: 11/27/2023
+ *
+ *This program will utilize the AHT20 sensor in iom361_R2 to generate random temperature
+ and humidity readings for a month. It timestamps and stores these readings in a Binary Search Tree (BST).
+ Users can query specific dates for temperature and humidity, and entering a blank line triggers an Inorder traversal,
+ displaying a sorted table of date and temperature/humidity pairs.
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <time.h>
+#include "bst.h"
+#include "float_rndm.h"
+#include "iom361_r2.h"
+#include <math.h>
+
+
+struct temp_humid_data new_temp_humid(u_int32_t t, u_int32_t h, time_t s) {
+    struct temp_humid_data th;
+    th.humid = h;
+    th.temp = t;
+    th.timestamp = s;
+    return th;
+}
+
+int start_time;
+void print_th(struct temp_humid_data th) {
+    char buffer[20];
+    time_t currentTime = th.timestamp;
+    struct tm *currentTimestamp;
+    currentTimestamp = localtime(&currentTime);
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", currentTimestamp);
+    printf("timestamp: %s\t",buffer);
+    printf("temprature: %d humidity: %d\n",th.temp, th.humid);    
+}
+
+struct bst_node *new_bst(struct temp_humid_data th) {
+    // create a new node and populates it
+    struct bst_node * node = (struct bst_node *)malloc(sizeof(struct bst_node));
+    node->th = th;
+    node->left = NULL;
+    node->right = NULL;
+}
+// inserts temp and humidity to bst tree
+void bst_insert(struct bst_node* root, struct temp_humid_data th) {
+    if (root != NULL) {
+        if (th.timestamp < root->th.timestamp) {
+            if (root->left == NULL)
+                root->left = new_bst(th);
+            bst_insert(root->left, th);
+        } else if (th.timestamp > root->th.timestamp) {
+            if (root->right == NULL)
+                root->right = new_bst(th);            
+            bst_insert(root->right, th);            
+        }
+        else {
+            root->th = th;
+        }
+    } else {
+      printf("Error. root is nullptr");
+    }
+}
+
+void shuffle_array(struct temp_humid_data *array, int size) {
+    // generate two random pos, swap them
+    // repeat at least half of the time of the total size of the array
+    // it is just my logic and i think it is very reasonable
+    for (int i=0; i < size/2; i++) {
+        int pos1 = (int)positive_float_rand_in_range(0,size); // casting to int
+        int pos2 = (int)positive_float_rand_in_range(0,size);
+
+        struct temp_humid_data temp = array[pos1];
+        array[pos1] = array[pos2];
+        array[pos2] = temp;
+    }        
+}
+
+// it will take an array and it will fill with entries
+// entries contain temp, hum, time stamp;
+
+void simulate_take_temp_humid_readings(int start_day, int end_day, struct temp_humid_data *array, int *size) {
+    // it will generate random temp and humidity and then read from register
+    // after that it will peform conversion as it is mentioned in iom361_r2.h
+    int rtn_code;       
+    uint32_t* base = iom361_initialize(8, 8, &rtn_code);
+    *size = end_day - start_day;
+    
+     time_t currentTime;
+     time(&currentTime);     
+     currentTime += start_day* 24 * 3600;
+     start_time = currentTime;
+     
+    for (int i = 0; i < end_day-start_day; i++) {
+        
+        _iom361_setSensor1_rndm(0,100,0,100);
+        uint32_t temp = iom361_readReg(base, TEMP_REG, &rtn_code);
+        temp = (temp/(powf(2,20)))*200-50;
+        //(ST/20**20) * 200 - 50
+        //printf("rtn: %d\t",rtn_code);
+        uint32_t humid = iom361_readReg(base, HUMID_REG, &rtn_code);
+        //Humidity(%) = (SRH/20**20) * 100
+        humid = (humid/(powf(2,20)))*100;
+        //printf("rtn: %d\t",rtn_code);
+
+        //printf("\n");
+        //printf("temp: %d humid: %d%%\n",temp,humid);
+        struct temp_humid_data th = new_temp_humid(temp,humid, currentTime);
+        currentTime += 24 * 3600; // next day at the same time
+
+        array[i] = th;        
+        //print_th(th);
+    }    
+}
+
+// start and end of the day in the calender
+void populateBST(struct bst_node *root, struct temp_humid_data *array,
+                 int size) {
+    shuffle_array(array, size); // now array has shuffled array
+    for (int i = 0; i < size; i++) {
+        bst_insert(root, array[i]);
+    }
+}
+
+struct bst_node *search_timestamp_bst(struct bst_node *root, time_t key) {    
+    if (root != NULL) {
+        if (root->th.timestamp == key)
+            return root;
+        else if (key > root->th.timestamp)
+            return search_timestamp_bst(root->right, key);
+        else
+            return search_timestamp_bst(root->left, key);
+    }
+    return NULL;
+}
+
+struct bst_node *search_bst(struct bst_node *root, int day) {
+    // search preorder
+    // convert day to time stamp;
+    time_t key = start_time + day * 24 * 3600;
+    return search_timestamp_bst(root,key);
+}
+
+void inorder_print(struct bst_node *root) {
+  if (root != NULL) {
+      if(root->left)
+          inorder_print(root->left);
+
+      print_th(root->th);
+
+    if(root->right)
+        inorder_print(root->right);
+  }
+}
